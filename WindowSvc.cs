@@ -1,5 +1,4 @@
-﻿using System;
-using System.Text;
+﻿using System.Text;
 using System.Runtime.InteropServices;
 using MonitorUtil.Models;
 
@@ -17,62 +16,155 @@ class WindowSvc
 
   [DllImport("user32.dll")]
   [return: MarshalAs(UnmanagedType.Bool)]
+  static extern bool IsZoomed(IntPtr hWnd);
+
+  [DllImport("user32.dll")]
+  static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+  [DllImport("user32.dll")]
   public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
   [DllImport("user32.dll", SetLastError = true)]
   [return: MarshalAs(UnmanagedType.Bool)]
   public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
 
-  // Define constants for SetWindowPos flags
+  [DllImport("user32.dll")]
+  public static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr lprcClip, EnumMonitorProc lpfnEnum, IntPtr dwData);
+
+  [DllImport("user32.dll", CharSet = CharSet.Auto)]
+  public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
+  [DllImport("user32.dll")]
+  public static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT lpwndpl);
+
   private const uint SWP_NOZORDER = 0x0004;
   private const uint SWP_NOSIZE = 0x0001;
+  private const int SW_RESTORE = 9;
+  private const int SW_MAXIMIZE = 3;
 
-  // Delegate for the EnumWindows callback function
   public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
-  public static void SwapWindows()
+  public delegate bool EnumMonitorProc(IntPtr hMonitor, IntPtr hdc, ref RECT lprcClip, IntPtr dwData);
+
+  private static List<RECT> mRects = new List<RECT>();
+  private static List<MOVE> mToSwap = new List<MOVE>();
+
+  public static void DoSwap(List<MOVE> monitorsToSwap)
   {
+    mToSwap = monitorsToSwap;
+
+    EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, new EnumMonitorProc(EnumMonitorCallback), IntPtr.Zero);
+    mRects = mRects
+      .OrderBy(x => x.Left)
+      .ToList();
+
+    if (mRects.Count <= 1)
+      return;
+
+    // Call EnumWindows to get all visible windows
     EnumWindows(new EnumWindowsProc(EnumWindowCallback), IntPtr.Zero);
   }
 
+  // Callback function for EnumWindows
   private static bool EnumWindowCallback(IntPtr hWnd, IntPtr lParam)
   {
-    if (IsWindowVisible(hWnd))
+
+    foreach (var swap in mToSwap)
     {
-      // Get the window title
-      StringBuilder windowTitle = new StringBuilder(256);
-      GetWindowText(hWnd, windowTitle, windowTitle.Capacity);
-
-      // If the title contains "Notepad++", move the window
-      if (windowTitle.ToString().Contains("Notepad++"))
+      // Check if the window is visible
+      if (IsWindowVisible(hWnd))
       {
-        // Get the window's current coordinates
-        RECT rect;
-        if (GetWindowRect(hWnd, out rect))
+        // Get the window title
+        StringBuilder windowTitle = new StringBuilder(256);
+        GetWindowText(hWnd, windowTitle, windowTitle.Capacity);
+
+        // Check if it's a taskbar window
+        if (IsTaskbar(hWnd))
         {
-          // Calculate the new position by adding 500 pixels to the left coordinate
-          int newLeft = rect.Left + 500;
-
-          // Move the window to the new position, keeping its current size
-          SetWindowPos(hWnd, IntPtr.Zero, newLeft, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top, SWP_NOZORDER | SWP_NOSIZE);
-
-          // Output the window information including the new position
-          Console.WriteLine($"Moved Window Handle: {hWnd.ToInt64()}, Title: {windowTitle.ToString()}");
-          Console.WriteLine($"New Coordinates: Left = {newLeft}, Top = {rect.Top}, Right = {rect.Right}, Bottom = {rect.Bottom}");
-          Console.WriteLine($"Width = {rect.Right - rect.Left}, Height = {rect.Bottom - rect.Top}");
+          Console.WriteLine($"Skipping Taskbar window: {windowTitle.ToString()}");
+          return true; // Skip moving the taskbar window
         }
-        else
+
+        if (GetWindowRect(hWnd, out var windoPos))
         {
-          Console.WriteLine($"Failed to get coordinates for window: {windowTitle.ToString()}");
+          // Determine which monitor the window is on based on its coordinates
+          int monitorIndex = -1;
+
+          for (int i = 0; i < mRects.Count; i++)
+          {
+            if (IsWindowOnMonitor(i, windoPos))
+            {
+              monitorIndex = i;
+              break;
+            }
+          }
+          if (monitorIndex == -1)
+            return false;
+
+          if (monitorIndex == swap.Src)
+          {
+            MoveWindowFromTo(windoPos, swap.Src, swap.Dest);
+          }
+          else if (monitorIndex == swap.Dest)
+          {
+            MoveWindowFromTo(windoPos, swap.Dest, swap.Src);
+          }
         }
       }
-      else
-      {
-        // Output window info without moving it if it doesn't match the title
-        Console.WriteLine($"Window Handle: {hWnd.ToInt64()}, Title: {windowTitle.ToString()}");
-      }
+
+    }
+    return true;
+
+    void MoveWindowFromTo(RECT windoPos, int srcMonitor, int destMonitor)
+    {
+      var maximized = IsZoomed(hWnd);
+      if (maximized) ShowWindow(hWnd, SW_RESTORE);
+
+      int x = mRects[destMonitor].Left + windoPos.Left - mRects[srcMonitor].Left;
+      int y = windoPos.Top;
+      int cx = windoPos.Right - windoPos.Left;
+      int cy = windoPos.Bottom - windoPos.Top;
+      SetWindowPos(hWnd, IntPtr.Zero, x, y, cx, cy, SWP_NOZORDER | SWP_NOSIZE);
+
+      if (maximized) ShowWindow(hWnd, SW_MAXIMIZE);
     }
 
-    return true; // Continue enumeration
+    bool IsWindowOnMonitor(int monitor, RECT windoPos)
+    {
+      var maximized = IsZoomed(hWnd);
+
+      if (maximized)
+      {
+        // only check middle.  Experience indicates bounds go outside monitor by 7px.
+        var xMid = (windoPos.Left + windoPos.Right) / 2;
+        var yMid = (windoPos.Top + windoPos.Bottom) / 2;
+        return xMid >= mRects[monitor].Left && xMid <= mRects[monitor].Right &&
+          yMid >= mRects[monitor].Top && yMid <= mRects[monitor].Bottom;
+      }
+
+      return windoPos.Left >= mRects[monitor].Left && windoPos.Left <= mRects[monitor].Right &&
+                windoPos.Top >= mRects[monitor].Top && windoPos.Bottom <= mRects[monitor].Bottom;
+    }
   }
+
+  // Callback function for EnumDisplayMonitors
+  private static bool EnumMonitorCallback(IntPtr hMonitor, IntPtr hdc, ref RECT lprcClip, IntPtr dwData)
+  {
+    mRects.Add(lprcClip);
+    return true;
+  }
+
+  private static bool IsTaskbar(IntPtr hWnd)
+  {
+    StringBuilder className = new StringBuilder(256);
+    GetClassName(hWnd, className, className.Capacity);
+
+    // Check if the window's class name matches the taskbar class name
+    var cName = className.ToString();
+    var tBarNames = new[] { "Shell_TrayWnd", "Shell_SecondaryTrayWnd" };
+    return tBarNames.Contains(cName);
+  }
+
+
+
 }
