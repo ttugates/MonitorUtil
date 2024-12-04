@@ -4,6 +4,7 @@ using MonitorUtil.Models;
 
 class WindowSvc
 {
+  #region user32.dll interop
   [DllImport("user32.dll")]
   public static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
 
@@ -46,6 +47,8 @@ class WindowSvc
 
   public delegate bool EnumMonitorProc(IntPtr hMonitor, IntPtr hdc, ref RECT lprcClip, IntPtr dwData);
 
+  #endregion
+
   private static List<RECT> mRects = new List<RECT>();
   private static List<MOVE> mToSwap = new List<MOVE>();
 
@@ -68,49 +71,37 @@ class WindowSvc
   // Callback function for EnumWindows
   private static bool EnumWindowCallback(IntPtr hWnd, IntPtr lParam)
   {
+    if (IsTaskbar(hWnd) || !IsWindowVisible(hWnd))
+      return true;
 
     foreach (var swap in mToSwap)
     {
-      // Check if the window is visible
-      if (IsWindowVisible(hWnd))
+      if (GetWindowRect(hWnd, out var windoPos))
       {
-        // Get the window title
-        StringBuilder windowTitle = new StringBuilder(256);
-        GetWindowText(hWnd, windowTitle, windowTitle.Capacity);
+        // Determine which monitor the window is on based on its coordinates
+        int monitorIndex = -1;
 
-        // Check if it's a taskbar window
-        if (IsTaskbar(hWnd))
+        for (int i = 0; i < mRects.Count; i++)
         {
-          Console.WriteLine($"Skipping Taskbar window: {windowTitle.ToString()}");
-          return true; // Skip moving the taskbar window
+          if (IsWindowOnMonitor(i, windoPos))
+          {
+            monitorIndex = i;
+            break;
+          }
         }
+        if (monitorIndex == -1)
+          return true;
 
-        if (GetWindowRect(hWnd, out var windoPos))
+        if (monitorIndex == swap.Src)
         {
-          // Determine which monitor the window is on based on its coordinates
-          int monitorIndex = -1;
-
-          for (int i = 0; i < mRects.Count; i++)
-          {
-            if (IsWindowOnMonitor(i, windoPos))
-            {
-              monitorIndex = i;
-              break;
-            }
-          }
-          if (monitorIndex == -1)
-            return false;
-
-          if (monitorIndex == swap.Src)
-          {
-            MoveWindowFromTo(windoPos, swap.Src, swap.Dest);
-          }
-          else if (monitorIndex == swap.Dest)
-          {
-            MoveWindowFromTo(windoPos, swap.Dest, swap.Src);
-          }
+          MoveWindowFromTo(windoPos, swap.Src, swap.Dest);
+        }
+        else if (monitorIndex == swap.Dest)
+        {
+          MoveWindowFromTo(windoPos, swap.Dest, swap.Src);
         }
       }
+
 
     }
     return true;
