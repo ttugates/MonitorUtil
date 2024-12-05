@@ -52,14 +52,14 @@ class WindowSvc
   private static List<RECT> mRects = new List<RECT>();
   private static List<WMovement> moves = new List<WMovement>();
 
-  public static void DoSwap(List<int> mToShift)
+  public static bool DoSwap(List<int> mToShift)
   {
     moves = BuildMoves(mToShift);
 
     EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, new EnumMonitorProc(EnumMonitorCallback), IntPtr.Zero);
 
     if (mToShift.Max() > mRects.Count)
-      return;
+      return false;
 
     // Monitor indicies are determined by position, left to right.  
     // Monitors with identical left alignment are sorted top to bottom
@@ -69,10 +69,12 @@ class WindowSvc
       .ToList();
 
     if (mRects.Count <= 1)
-      return;
+      return false;
 
     // Call EnumWindows to get all visible windows
     EnumWindows(new EnumWindowsProc(EnumWindowCallback), IntPtr.Zero);
+
+    return true;
   }
 
   // Callback function for EnumWindows
