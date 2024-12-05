@@ -25,7 +25,7 @@ All in all, it was a net positive in efficiency using AI for this small project.
 
 ## How to use
 Take note of a notional monitor configuration such as the following:
-
+```
          _________  
         |         |  
         |  Top    |  
@@ -37,7 +37,7 @@ Take note of a notional monitor configuration such as the following:
   | Monitor | | Monitor | | Monitor |  
   |    0    | |    2    | |    3    |  
   |_________| |_________| |_________|  
-
+```
 The monitors are 0 base indexed from left to right.  Instances(not in this example) 
 where monitors have the exact same left most horizontal alignment are then indexed top to 
 bottom.
