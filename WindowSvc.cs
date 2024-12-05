@@ -50,15 +50,22 @@ class WindowSvc
   #endregion
 
   private static List<RECT> mRects = new List<RECT>();
-  private static List<MOVE> mToSwap = new List<MOVE>();
+  private static List<WMovement> moves = new List<WMovement>();
 
-  public static void DoSwap(List<MOVE> monitorsToSwap)
+  public static void DoSwap(List<int> mToShift)
   {
-    mToSwap = monitorsToSwap;
+    moves = BuildMoves(mToShift);
 
     EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, new EnumMonitorProc(EnumMonitorCallback), IntPtr.Zero);
+
+    if (mToShift.Max() > mRects.Count)
+      return;
+
+    // Monitor indicies are determined by position, left to right.  
+    // Monitors with identical left alignment are sorted top to bottom
     mRects = mRects
       .OrderBy(x => x.Left)
+      .ThenBy(x => x.Top)
       .ToList();
 
     if (mRects.Count <= 1)
@@ -74,50 +81,47 @@ class WindowSvc
     if (IsTaskbar(hWnd) || !IsWindowVisible(hWnd))
       return true;
 
-    foreach (var swap in mToSwap)
+    if (GetWindowRect(hWnd, out var windoPos))
     {
-      if (GetWindowRect(hWnd, out var windoPos))
+      foreach (var move in moves)
       {
-        // Determine which monitor the window is on based on its coordinates
-        int monitorIndex = -1;
-
-        for (int i = 0; i < mRects.Count; i++)
-        {
-          if (IsWindowOnMonitor(i, windoPos))
-          {
-            monitorIndex = i;
-            break;
-          }
-        }
+        int monitorIndex = GetMonitorIndexOfWindow(windoPos);
+        
         if (monitorIndex == -1)
           return true;
 
-        if (monitorIndex == swap.Src)
-        {
-          MoveWindowFromTo(windoPos, swap.Src, swap.Dest);
-        }
-        else if (monitorIndex == swap.Dest)
-        {
-          MoveWindowFromTo(windoPos, swap.Dest, swap.Src);
-        }
+        if (monitorIndex == move.Src)
+          MoveWindow(windoPos, move.Src, move.Dest);
       }
-
-
     }
+
     return true;
 
-    void MoveWindowFromTo(RECT windoPos, int srcMonitor, int destMonitor)
+    void MoveWindow(RECT windoPos, int src, int dest)
     {
       var maximized = IsZoomed(hWnd);
       if (maximized) ShowWindow(hWnd, SW_RESTORE);
 
-      int x = mRects[destMonitor].Left + windoPos.Left - mRects[srcMonitor].Left;
+      int x = mRects[dest].Left + windoPos.Left - mRects[src].Left;
       int y = windoPos.Top;
       int cx = windoPos.Right - windoPos.Left;
       int cy = windoPos.Bottom - windoPos.Top;
       SetWindowPos(hWnd, IntPtr.Zero, x, y, cx, cy, SWP_NOZORDER | SWP_NOSIZE);
 
       if (maximized) ShowWindow(hWnd, SW_MAXIMIZE);
+    }
+
+    int GetMonitorIndexOfWindow(RECT windoPos)
+    {
+      for (int i = 0; i < mRects.Count; i++)
+      {
+        if (IsWindowOnMonitor(i, windoPos))
+        {
+          return i;
+        }
+      }
+
+      return -1;
     }
 
     bool IsWindowOnMonitor(int monitor, RECT windoPos)
@@ -145,6 +149,20 @@ class WindowSvc
     return true;
   }
 
+  private static List<WMovement> BuildMoves(List<int> screens)
+  {
+    var res = new List<WMovement>();
+    var count = screens.Count;
+    for (int i = 0; i < count; i++)
+    {
+      var src = screens[i];
+      var dest = screens[(i + 1) % count];
+      res.Add(new WMovement(src, dest));
+    }
+
+    return res;
+  }
+
   private static bool IsTaskbar(IntPtr hWnd)
   {
     StringBuilder className = new StringBuilder(256);
@@ -155,7 +173,5 @@ class WindowSvc
     var tBarNames = new[] { "Shell_TrayWnd", "Shell_SecondaryTrayWnd" };
     return tBarNames.Contains(cName);
   }
-
-
 
 }

@@ -1,16 +1,25 @@
-﻿
-using MonitorUtil.Models;
-
-class Program
+﻿class Program
 {
   static void Main(string[] args)
   {
-    WindowSvc.DoSwap(new List<MOVE> { 
-      new MOVE(2, 3),
-      new MOVE(0, 2)
-    });
-
+    if (TryParseArgs(args, out var mShifts))
+    {
+      WindowSvc.DoSwap(mShifts);
+    }
   }
 
+  static bool TryParseArgs(string[] args, out List<int> res)
+  {
+    res = args
+      .Select<string, int?>(x =>
+        Int32.TryParse(x.Trim(), out var i)
+        ? i
+        : null
+      )
+      .OfType<int>()
+      .ToList();
+
+    return res.Count > 1;
+  }
 
 }
